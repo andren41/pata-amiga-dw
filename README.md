@@ -18,5 +18,5 @@ Por fim, analisei os marcos de entrega em branco, o que na verdade não é um er
 
 
 
-
+!\[Modelo dimensional](diagrama/modelo-estrela.png)
 
