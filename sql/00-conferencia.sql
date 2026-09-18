@@ -1,17 +1,9 @@
 -- =====================================================================================
---  00-CONFERENCIA.SQL   -   RODE DEPOIS DE CADA ETAPA
---  Case: Pata Amiga  |  MySQL 8.0
+--  ARQUIVO 0: AUDITORIA E VALIDAÇÃO
+--  Projeto: DW Pata Amiga  |  MySQL 8.0
 -- =====================================================================================
---  Arquivo de conferencia (nao faz parte da entrega).
---
---  Cada bloco tem o valor esperado ao lado. Rode o bloco correspondente logo
---  depois de cada arquivo. Se um numero nao bater, corrija antes de seguir: os
---  arquivos dependem uns dos outros.
---
---  A contagem de linhas da dim_categoria depende do banco: no MySQL a collation
---  padrao junta 'Racao' com 'RACAO', entao o DISTINCT devolve menos linhas do
---  que em bancos que comparam byte a byte. O teste que vale e o das 7 categorias
---  PADRONIZADAS, nao o numero de linhas.
+--  Objetivo: Script auxiliar para conferência de métricas e diagnóstico
+--  da origem antes e durante a construção do modelo dimensional.
 -- =====================================================================================
 
 USE dw_pata_amiga;

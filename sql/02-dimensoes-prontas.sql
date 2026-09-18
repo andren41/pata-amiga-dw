@@ -1,26 +1,26 @@
 -- =====================================================================================
---  ARQUIVO 2:  AS DIMENSOES PRONTAS  +  AS TABELAS DO MODELO
---  Case: Pata Amiga  |  MySQL 8.0
+--  ARQUIVO 2: CRIAÇÃO DA ESTRUTURA E CARGAS ESTÁTICAS
+--  Projeto: DW Pata Amiga  |  MySQL 8.0
 -- =====================================================================================
---  Rode depois de: 01-carga-staging.sql
+--  Pré-requisito: Executar 01-carga-staging.sql
 --
---  Vem prontas aqui:
+--  Objetivo deste script:
 --
---  1) dim_tempo e dim_loja, ja carregadas. Voce nao as constroi, apenas as usa.
+--  1) Criar e popular as dimensões estáticas (dim_tempo e dim_loja).
 --
---  2) O CREATE TABLE das outras quatro tabelas (dim_categoria, dim_praca,
---     bridge_loja_praca e fato_pedido), vazias. Voce as preenche nos
---     arquivos 03 e 04.
+--  2) Criar a estrutura (CREATE TABLE) das demais tabelas (dim_categoria, dim_praca,
+--     bridge_loja_praca e fato_pedido). Estas tabelas serão populadas nos scripts 03 e 04.
 --
---  dim_tempo   A chave e a propria data em numero: 16/11/2023 vira 20231116.
---              A fato monta essa FK por calculo, sem JOIN.
+--  Regras de Negócio Aplicadas:
 --
---  dim_loja    Uma linha por loja, mais a linha -1. A coluna chave_loja traz o
---              nome padronizado (caixa alta, sem acento): e por ela que a fato
---              encontra a loja depois de limpar o nome da stg_pedido.
+--  - dim_tempo: A PK é a própria data em formato numérico (ex: 16/11/2023 -> 20231116).
+--               Isso permite gerar a FK na tabela Fato por cálculo direto, sem JOIN.
 --
---  Toda dimensao tem a linha -1 = "Nao Informado". Nenhuma FK pode ficar nula:
---  quando o dado falta, ela aponta para essa linha.
+--  - dim_loja:  A coluna 'chave_loja' traz o nome padronizado (caixa alta, sem acento).
+--               É por ela que a Fato encontra a loja após limpar os dados da staging.
+--
+--  - Integridade: Toda dimensão recebe a linha -1 = "Não Informado". Nenhuma FK pode
+--                 ficar nula; quando o dado original falta, ele é apontado para a linha -1.
 -- =====================================================================================
 
 USE dw_pata_amiga;

@@ -1,14 +1,9 @@
 -- =====================================================================================
---  ARQUIVO 1:  CARGA DA AREA DE STAGING
---  Case: Pata Amiga - rede de petshops de SC  |  MySQL 8.0
+--  ARQUIVO 1: CRIAÇÃO DO BANCO E CARGA STAGING
+--  Projeto: DW Pata Amiga  |  MySQL 8.0
 -- =====================================================================================
---  Rode este arquivo PRIMEIRO. Ele cria o banco e carrega as TRES tabelas de
---  origem como vieram dos sistemas: todas as colunas em texto, com os nomes
---  fora de snake_case e os dados sem tratamento.
---
---  ESTAS TABELAS NAO PODEM SER ALTERADAS: elas representam a origem. Nao use
---  UPDATE nem ALTER. Todo tratamento acontece nos INSERT das dimensoes e da
---  fato, nos arquivos 03 e 04.
+--  Objetivo: Criar o banco de dados dw_pata_amiga e realizar a ingestão 
+--  dos dados brutos (staging) exatamente como vieram dos sistemas de origem.
 -- =====================================================================================
 
 DROP DATABASE IF EXISTS dw_pata_amiga;
