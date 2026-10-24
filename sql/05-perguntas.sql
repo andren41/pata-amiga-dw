@@ -1,14 +1,19 @@
--- Script 05: As Cinco Perguntas de Negócio
--- Projeto: Data Warehouse Pata Amiga
+-- ============================================================================
+-- SCRIPT 05: EXECUTIVE BUSINESS QUERIES (Q1 TO Q5)
+-- Purpose: Answer the 5 core analytical questions on delivery bottlenecks,
+--          category revenue, channel discounts, regional proration, and
+--          store expansion using the Star Schema Data Warehouse.
+-- ============================================================================
 
 USE dw_pata_amiga;
 
 -- -----------------------------------------------------------------------------
--- PERGUNTA 1: Onde está o gargalo do processo de entrega?
+-- QUESTION 1: Where is the bottleneck in the delivery process?
 -- -----------------------------------------------------------------------------
--- Agrupei as médias de tempo por porte de loja. 
--- Um detalhe importante: como deixei as etapas não concluídas como NULL na tabela fato (em vez de zero), 
--- a função AVG ignora essas linhas automaticamente. Se fosse zero, a média seria puxada para baixo de forma errada.
+-- Grouped average lead times by store size (porte).
+-- Important detail: because uncompleted stages were stored as NULL in the fact
+-- table (instead of zero), the AVG() function automatically ignores those rows.
+-- If zeros had been used, the averages would be artificially skewed downward.
 SELECT
     l.porte,
     COUNT(*) AS pedidos,
@@ -24,13 +29,14 @@ ORDER BY l.porte;
 
 
 -- -----------------------------------------------------------------------------
--- PERGUNTA 2: Qual categoria concentra o faturamento?
+-- QUESTION 2: Which category concentrates total revenue?
 -- -----------------------------------------------------------------------------
--- Aqui o uso da dim_categoria se justifica. Agrupei pelo nome padronizado para 
--- resolver as múltiplas grafias. Para a porcentagem, usei uma subconsulta simples 
--- que traz o faturamento total da rede como denominador.
+-- This query justifies the dedicated dim_categoria table: grouping by the
+-- standardized category name resolves the 18 raw spelling variations.
+-- For the percentage share, a scalar subquery retrieves total chain revenue
+-- as the denominator.
 
--- 2.1 Visão geral da rede:
+-- 2.1 Chain-wide overview:
 SELECT
     dc.nome_categoria,
     ROUND(SUM(f.vl_liquido), 2) AS faturamento,
@@ -40,7 +46,7 @@ JOIN dim_categoria dc ON dc.sk_categoria = f.sk_categoria
 GROUP BY dc.nome_categoria
 ORDER BY faturamento DESC;
 
--- 2.2 Visão por porte de loja (para ver se a campeã muda dependendo do tamanho da loja):
+-- 2.2 Breakdown by store size (to check whether the top category changes by store format):
 SELECT
     l.porte,
     dc.nome_categoria,
@@ -53,13 +59,14 @@ ORDER BY l.porte, faturamento DESC;
 
 
 -- -----------------------------------------------------------------------------
--- PERGUNTA 3: O desconto funciona igual em todo canal?
+-- QUESTION 3: Does the discount policy perform equally across all channels?
 -- -----------------------------------------------------------------------------
--- O legal dessa consulta é que não precisa de JOIN. Como padronizei os canais 
--- e a flag de desconto diretamente na tabela fato, tudo se resolve nela mesma.
--- A ideia é analisar o Ticket Médio para ver se a política faz sentido.
+-- A key advantage of this query is that no JOIN is required. Since order channels
+-- and the discount flag were standardized directly in the fact table (degenerate
+-- dimensions), everything is resolved within fato_pedido itself.
+-- The goal is to evaluate Average Ticket (Ticket Médio) to assess policy consistency.
 
--- 3.1 Comparativo do ticket médio com e sem desconto por canal:
+-- 3.1 Average ticket comparison with vs. without discount by channel:
 SELECT
     canal_pedido,
     houve_desconto,
@@ -69,7 +76,7 @@ FROM fato_pedido
 GROUP BY canal_pedido, houve_desconto
 ORDER BY canal_pedido, houve_desconto;
 
--- 3.2 Representatividade de cada canal no faturamento total:
+-- 3.2 Revenue share of each sales channel across total chain revenue:
 SELECT
     canal_pedido,
     ROUND(SUM(vl_liquido), 2) AS faturamento,
@@ -80,13 +87,14 @@ ORDER BY faturamento DESC;
 
 
 -- -----------------------------------------------------------------------------
--- PERGUNTA 4: Qual praça de atendimento concentra o faturamento?
+-- QUESTION 4: Which service region (praça) concentrates revenue?
 -- -----------------------------------------------------------------------------
--- Este é o cruzamento mais complexo do modelo, usando a tabela ponte. 
--- Como uma loja atende várias praças, o JOIN fatalmente duplica o pedido. 
--- Para o faturamento não inflar, multipliquei o valor pelo "fator_publico" de rateio.
+-- This is the most complex join in the model, leveraging the N:N bridge table.
+-- Because a single store can serve multiple service regions, the JOIN inevitably
+-- duplicates (fans out) order rows. To prevent revenue inflation, order revenue
+-- is multiplied by the "fator_publico" proration weight.
 
--- 4.1 Faturamento rateado por praça:
+-- 4.1 Prorated revenue by service region:
 SELECT
     dp.nome_praca,
     dp.domicilios_com_pet,
@@ -98,8 +106,8 @@ JOIN dim_praca dp ON dp.sk_praca = b.sk_praca
 GROUP BY dp.nome_praca, dp.domicilios_com_pet
 ORDER BY faturamento_rateado DESC;
 
--- 4.2 Prova Real (Auditoria do rateio):
--- Garantindo que a soma rateada + pedidos órfãos batem exatamente com o faturamento da rede.
+-- 4.2 Reconciliation Audit (Proration Proof):
+-- Verifying that prorated revenue + unidentified store orders match total chain revenue exactly.
 SELECT
     (SELECT ROUND(SUM(f.vl_liquido * b.fator_publico), 2)
        FROM fato_pedido f
@@ -110,12 +118,13 @@ SELECT
 
 
 -- -----------------------------------------------------------------------------
--- PERGUNTA 5: Onde abrir a próxima loja e as limitações dos dados
+-- QUESTION 5: Where to open the next store & data limitations
 -- -----------------------------------------------------------------------------
--- Para ter um dado mais justo, calculei a venda de itens a cada mil habitantes 
--- diretamente na consulta em vez de gravar um número absoluto.
+-- For a fairer comparison across municipalities of different sizes, items sold
+-- per 1,000 inhabitants are calculated dynamically in the query rather than
+-- relying on raw absolute volume.
 
--- 5(a) Ranking por itens a cada 1000 habitantes cruzado com tempo médio de entrega:
+-- 5(a) Store ranking by items sold per 1,000 inhabitants cross-referenced with average delivery lead time:
 SELECT
     l.nome_loja,
     l.populacao_cidade,
@@ -128,10 +137,10 @@ WHERE l.sk_loja <> -1
 GROUP BY l.sk_loja, l.nome_loja, l.populacao_cidade
 ORDER BY itens_por_mil_habitantes DESC;
 
--- 5(b) O que os dados NÃO permitem afirmar (Faixa de Franquia):
--- A dimensão loja guarda apenas a foto de "hoje" (não criamos histórico/SCD).
--- Portanto, o faturamento abaixo não diz "quanto a loja vendeu enquanto era ouro", 
--- mas sim "quanto faturou a loja que hoje é ouro".
+-- 5(b) What the data CANNOT claim (Franchise Tier / SCD Limitation):
+-- The store dimension only stores the current snapshot (no historical tracking / SCD Type 2).
+-- Therefore, the revenue below does not state "how much a store sold while in the Gold tier",
+-- but rather "total revenue generated by stores that are currently classified as Gold today".
 SELECT
     l.faixa_franquia,
     ROUND(SUM(f.vl_liquido), 2) AS faturamento,
@@ -141,7 +150,7 @@ JOIN dim_loja l ON l.sk_loja = f.sk_loja
 GROUP BY l.faixa_franquia
 ORDER BY faturamento DESC;
 
--- 5(c) Transparência de Dados: O que ficou de fora da análise?
+-- 5(c) Data Transparency Audit: What was left out or incomplete in the analysis?
 SELECT 'pedidos sem loja identificada' AS o_que_ficou_de_fora, COUNT(*) AS quantidade
 FROM fato_pedido WHERE sk_loja = -1
 UNION ALL
