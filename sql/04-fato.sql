@@ -8,11 +8,11 @@
 USE dw_pata_amiga;
 
 -- -----------------------------------------------------------------------------
--- CARGA DA FATO_PEDIDO
+-- FACT TABLE LOAD (fato_pedido)
 -- -----------------------------------------------------------------------------
--- Esta é a tabela principal do DW. O grão é de 1 linha por pedido (total de 4.044).
--- O objetivo principal aqui é consolidar as métricas, calcular o tempo das entregas
--- e garantir que nenhuma Foreign Key (FK) fique nula (usando a linha -1 quando necessário).
+-- Central table of the Data Warehouse. Grain: 1 row per order (4,044 total rows).
+-- Consolidates additive metrics, computes delivery stage lead times, and enforces
+-- referential integrity by mapping missing Foreign Keys to the -1 default row.
 INSERT INTO fato_pedido (
     numero_pedido, sk_tempo_pedido, sk_tempo_entrega, sk_loja, sk_categoria,
     houve_desconto, canal_pedido, dt_pedido, qt_itens, vl_liquido,
@@ -22,34 +22,34 @@ INSERT INTO fato_pedido (
 SELECT
     p.NumeroPedido,
 
-    -- TRATAMENTO DE TEMPO
-    -- A data original do pedido vem no formato americano (Mês/Dia/Ano) com AM/PM.
-    -- Precisei usar STR_TO_DATE com a máscara '%m/%d/%Y %h:%i %p' para converter 
-    -- corretamente antes de transformar na chave numérica YYYYMMDD.
+    -- DATE & TIME HANDLING (ROLE-PLAYING DIMENSION)
+    -- Raw order timestamps arrive in US format (Month/Day/Year) with AM/PM.
+    -- Parsed via STR_TO_DATE using '%m/%d/%Y %h:%i %p' before formatting into the
+    -- numeric YYYYMMDD smart key.
     CAST(DATE_FORMAT(STR_TO_DATE(p.DtHoraPedido, '%m/%d/%Y %h:%i %p'), '%Y%m%d') AS SIGNED),
 
-    -- Para a data de entrega, se estiver vazio significa que o pedido ainda está em 
-    -- andamento. Nesses casos, aponto para a linha de controle -1.
+    -- For delivery date, a blank string indicates an order still in transit/open.
+    -- In such cases, point the Foreign Key to the -1 control row.
     CASE WHEN p.DtEntregaCliente = '' THEN -1
          ELSE CAST(DATE_FORMAT(DATE(p.DtEntregaCliente), '%Y%m%d') AS SIGNED)
     END,
 
-    -- CHAVES ESTRANGEIRAS (Lojas e Categorias)
-    -- As chaves vêm dos LEFT JOINs lá embaixo. Se não houver correspondência, 
-    -- o CASE garante que o valor seja -1 em vez de NULL.
+    -- FOREIGN KEYS (Stores and Categories)
+    -- Surrogate keys are resolved via the LEFT JOINs below. If no match is found,
+    -- the CASE expression assigns -1 instead of NULL.
     CASE WHEN dl.sk_loja IS NULL THEN -1 ELSE dl.sk_loja END,
     CASE WHEN dc.sk_categoria IS NULL THEN -1 ELSE dc.sk_categoria END,
 
-    -- PADRONIZAÇÃO NA PRÓPRIA FATO
-    -- Algumas informações não precisaram virar dimensões, mas precisavam de limpeza.
-    -- O 'HouveDesconto' vinha escrito de 17 jeitos diferentes. Resumi tudo em Sim/Não/Não Informado.
+    -- DEGENERATE DIMENSION STANDARDIZATION IN THE FACT TABLE
+    -- Low-cardinality flags cleaned directly during Fact ingestion:
+    -- 'HouveDesconto' arrived in 12+ raw variations, normalized into Sim / Nao / Nao Informado.
     CASE WHEN UPPER(TRIM(p.HouveDesconto)) IN ('S','SIM','1','X','TRUE','V') THEN 'Sim'
          WHEN UPPER(TRIM(p.HouveDesconto)) IN ('N','NAO','0','FALSE','F') THEN 'Nao'
          ELSE 'Nao Informado'
     END,
 
-    -- No 'CanalPedido' a ordem do teste é crítica: como WhatsApp tem 'App' no nome, 
-    -- ele precisava ser testado e filtrado primeiro.
+    -- In 'CanalPedido', evaluation order is critical: because 'WhatsApp' contains the
+    -- substring 'App', '%WHATS%' must be evaluated and filtered before '%APP%'.
     CASE WHEN UPPER(p.CanalPedido) LIKE '%WHATS%' THEN 'WhatsApp'
          WHEN UPPER(p.CanalPedido) LIKE '%APP%'   THEN 'App'
          WHEN UPPER(p.CanalPedido) LIKE '%SITE%'  THEN 'Site'
@@ -58,25 +58,26 @@ SELECT
          ELSE 'Nao Informado'
     END,
 
-    -- MÉTRICAS E VALORES
+    -- METRICS & MONETARY VALUES
     STR_TO_DATE(p.DtHoraPedido, '%m/%d/%Y %h:%i %p'),
 
-    -- Para as métricas numéricas, troquei valores vazios ou hifens por NULL (nunca zero).
+    -- For numeric quantities, blank strings or hyphens are converted to NULL (never zero).
     CASE WHEN TRIM(p.`QTD.Itens`) IN ('','-') THEN NULL ELSE CAST(p.`QTD.Itens` AS SIGNED) END,
 
-    -- O valor líquido (faturamento) precisou de uma limpeza bem agressiva, tirando o "R$",
-    -- removendo espaços, pontos de milhar e ajustando a vírgula antes de virar DECIMAL.
+    -- Net revenue (vl_liquido) required multi-format string sanitization: stripping 'R$',
+    -- spaces, and thousand separators ('.'), and converting decimal commas (',') to dots
+    -- prior to casting as DECIMAL(15,2).
     CASE WHEN TRIM(REPLACE(p.`ValorLiquidoPedido(R$)`,'R$','')) IN ('','-') THEN NULL
          WHEN p.`ValorLiquidoPedido(R$)` LIKE '%,%'
               THEN CAST(REPLACE(REPLACE(REPLACE(REPLACE(p.`ValorLiquidoPedido(R$)`,'R$',''),' ',''),'.',''),',','.')
-                   AS DECIMAL(15,2))
+                    AS DECIMAL(15,2))
          ELSE CAST(REPLACE(REPLACE(p.`ValorLiquidoPedido(R$)`,'R$',''),' ','') AS DECIMAL(15,2))
     END,
 
-    -- CÁLCULO DE INTERVALOS (Gargalos de Entrega)
-    -- Calculei o DATEDIFF entre os marcos do pedido. 
-    -- IMPORTANTE: Se um marco está em branco, o tempo gravado tem que ser NULL. 
-    -- Se eu colocasse zero, iria distorcer a média de entrega para baixo nas análises.
+    -- LOGISTICS LEAD-TIME INTERVAL CALCULATIONS (Delivery Bottlenecks)
+    -- Computed via DATEDIFF between consecutive order milestones.
+    -- CRITICAL: If a milestone timestamp is blank, the recorded lag must be NULL.
+    -- Recording 0 would artificially pull down average delivery lead times in analytical queries.
     CASE WHEN p.`Dt Separacao Estoque` = '' THEN NULL
          ELSE DATEDIFF(DATE(p.`Dt Separacao Estoque`), DATE(STR_TO_DATE(p.DtHoraIntegracaoERP, '%m/%d/%Y %h:%i %p')))
     END,
@@ -94,8 +95,8 @@ SELECT
     END
 
 FROM stg_pedido p
--- Para encontrar a loja correta, primeiro limpei o sufixo '/SC' e espaços duplos.
--- Depois, um CASE trata manualmente 3 erros específicos (digitação, apelido e abreviação).
+-- To resolve the store key, mechanical REPLACE functions first strip the '/SC' suffix and double spaces.
+-- Next, a targeted CASE statement resolves 3 specific anomalies (typo, nickname, and abbreviation).
 LEFT JOIN dim_loja dl
        ON dl.chave_loja =
           CASE
@@ -104,6 +105,6 @@ LEFT JOIN dim_loja dl
               WHEN REPLACE(REPLACE(TRIM(p.`Loja-Nome`), '/SC', ''), '  ', ' ') = 'Pata Amiga Jgua do Sul'     THEN 'Pata Amiga Jaragua do Sul'
               ELSE REPLACE(REPLACE(TRIM(p.`Loja-Nome`), '/SC', ''), '  ', ' ')
           END
--- O JOIN da categoria é bem mais direto, conectando direto na chave crua da dimensão.
+-- Category lookup joins directly against the raw source string preserved in dim_categoria.
 LEFT JOIN dim_categoria dc
        ON dc.categoria_origem = p.CategoriaProduto;
