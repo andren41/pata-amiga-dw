@@ -1,20 +1,20 @@
 -- ============================================================================
--- SCRIPT 00: DATA QUALITY & STAGING DIAGNOSTICS
+-- SCRIPT 00: DATA QUALITY & STAGING DIAGNOSTICS (UNIT TESTS)
 -- Purpose: Audit raw data imported from the 3 source systems (E-commerce,
---          Store Registry, and Service Regions) to inspect row counts, nulls,
---          spelling variations, and date formats prior to ETL modeling.
+--          Store Registry, and Service Regions) and validate row counts,
+--          referential integrity, and business rules across every ETL stage.
 -- ============================================================================
 
 USE dw_pata_amiga;
 
 -- =====================================================================================
---  DEPOIS DO 01 - A STAGING
+--  AFTER SCRIPT 01 - STAGING LAYER VALIDATION
 -- =====================================================================================
 SELECT 'stg_pedido'     AS tabela, COUNT(*) AS linhas, 4044 AS esperado FROM stg_pedido
 UNION ALL SELECT 'stg_loja',       COUNT(*), 32 FROM stg_loja
 UNION ALL SELECT 'stg_loja_praca', COUNT(*), 48 FROM stg_loja_praca;
 
--- Diagnostico da Tarefa 1. Estes numeros vao para o README.
+-- Initial Staging Diagnostics (metrics documented in the README).
 SELECT 'grafias distintas de categoria (no MySQL)' AS diagnostico,
        COUNT(DISTINCT `CategoriaProduto`) AS valor, '18' AS esperado FROM stg_pedido
 UNION ALL SELECT 'grafias distintas de nome de loja',
@@ -28,7 +28,7 @@ UNION ALL SELECT 'pedidos sem Cod Loja preenchido',
 UNION ALL SELECT 'pedidos sem nome de loja (vao para a -1)',
        SUM(CASE WHEN `Loja-Nome` = '' THEN 1 ELSE 0 END), '3' FROM stg_pedido;
 
--- Os quatro marcos em branco = processo em aberto. Vao virar dias NULL.
+-- Blank logistics milestones = open/in-progress orders. Will be stored as NULL lead-time days.
 SELECT 'Dt Separacao Estoque' AS marco,
        SUM(CASE WHEN `Dt Separacao Estoque` = '' THEN 1 ELSE 0 END) AS em_branco,
        1077 AS esperado FROM stg_pedido
@@ -39,9 +39,9 @@ UNION ALL SELECT 'Dt_Despacho_Transportadora',
 UNION ALL SELECT 'DtEntregaCliente',
        SUM(CASE WHEN `DtEntregaCliente` = '' THEN 1 ELSE 0 END), 1953 FROM stg_pedido;
 
--- Comparacao das duas mascaras de data. Rode antes de escrever a fato.
--- A primeira coluna deve dar 4044 e a segunda, 0. Se estiverem trocadas, a
--- mascara de data escolhida esta errada.
+-- Date mask comparison. Run prior to loading the Fact table.
+-- The first column must return 4044 and the second must return 0.
+-- If inverted, the chosen date parsing mask is incorrect.
 SELECT
     SUM(CASE WHEN STR_TO_DATE(`DtHoraPedido`, '%m/%d/%Y %h:%i %p') IS NOT NULL
              THEN 1 ELSE 0 END) AS mascara_AMERICANA_ok,
@@ -50,63 +50,63 @@ SELECT
 FROM stg_pedido;
 
 -- =====================================================================================
---  DEPOIS DO 02 - O QUE VEIO PRONTO
+--  AFTER SCRIPT 02 - STATIC DIMENSIONS & EMPTY DDL SKELETON
 -- =====================================================================================
 SELECT 'dim_tempo' AS tabela, COUNT(*) AS linhas, '236  (235 dias + a -1)' AS esperado
 FROM dim_tempo
 UNION ALL SELECT 'dim_loja', COUNT(*), '33  (32 lojas + a -1)' FROM dim_loja;
 
--- As quatro tabelas ja existem e estao VAZIAS. Todas devem dar zero.
+-- The four target tables below are created empty. All counts must equal zero at this stage.
 SELECT 'dim_categoria' AS tabela, COUNT(*) AS deve_estar_vazia FROM dim_categoria
 UNION ALL SELECT 'dim_praca',         COUNT(*) FROM dim_praca
 UNION ALL SELECT 'bridge_loja_praca', COUNT(*) FROM bridge_loja_praca
 UNION ALL SELECT 'fato_pedido',       COUNT(*) FROM fato_pedido;
 
 -- =====================================================================================
---  DEPOIS DO 03 - AS SUAS DIMENSOES
+--  AFTER SCRIPT 03 - POPULATED DIMENSIONS & BRIDGE TABLE
 -- =====================================================================================
 SELECT 'dim_categoria'     AS tabela, COUNT(*) AS linhas,
        '19 no MySQL - varia por banco' AS esperado FROM dim_categoria
 UNION ALL SELECT 'dim_praca',         COUNT(*), '13  (12 pracas + a -1)' FROM dim_praca
 UNION ALL SELECT 'bridge_loja_praca', COUNT(*), '48' FROM bridge_loja_praca;
 
--- ESTE e o teste que vale nota, e ele NAO muda de banco para banco.
+-- Core standardization check: must return 8 (7 canonical categories + row -1) across any RDBMS.
 SELECT COUNT(DISTINCT nome_categoria) AS categorias_padronizadas,
        '8 = as 7 categorias + a linha -1' AS esperado FROM dim_categoria;
 
--- Se aparecer 'Nao Informado' numa linha que nao e a -1, algum WHEN do CASE nao
--- classificou a grafia. A consulta deve voltar VAZIA.
+-- If 'Nao Informado' appears in any row other than sk_categoria = -1, a CASE WHEN branch
+-- failed to classify a spelling variation. This query must return EMPTY.
 SELECT categoria_origem, nome_categoria FROM dim_categoria
 WHERE nome_categoria = 'Nao Informado' AND sk_categoria <> -1;
 
--- Ordem do CASE, teste 1: "Racao Medicamentosa" deve ser Medicamento.
--- Se aparecer 'Racao' na segunda coluna, o CASE testou RA antes de MED.
+-- CASE evaluation order test 1: "Racao Medicamentosa" must map to 'Medicamento'.
+-- If 'Racao' appears in the second column, the CASE statement evaluated RA before MED.
 SELECT categoria_origem, nome_categoria, 'Medicamento' AS esperado
 FROM dim_categoria WHERE UPPER(categoria_origem) LIKE '%MEDICAMENTOSA%';
 
 
--- A ponte: o fator deve somar 1,00 em cada loja. A consulta deve voltar VAZIA.
+-- Bridge table check: audience weights must sum to 1.0000 per store. Query must return EMPTY.
 SELECT cod_loja, ROUND(SUM(fator_publico), 4) AS soma_dos_fatores
 FROM bridge_loja_praca GROUP BY cod_loja
 HAVING ROUND(SUM(fator_publico), 4) <> 1;
 
--- As 32 lojas devem estar na ponte, e toda praca deve ter pelo menos uma loja.
+-- All 32 stores must exist in the bridge table, and every region must be linked to at least one store.
 SELECT 'lojas na ponte' AS teste, COUNT(DISTINCT cod_loja) AS valor, '32' AS esperado
 FROM bridge_loja_praca
 UNION ALL SELECT 'pracas na ponte', COUNT(DISTINCT sk_praca), '12' FROM bridge_loja_praca;
 
--- Toda dimensao precisa da linha -1. As duas devem aparecer aqui.
+-- Every dimension requires the default -1 unknown member row. Both must return 1 here.
 SELECT 'dim_categoria' AS dimensao, COUNT(*) AS tem_a_linha_menos_1
 FROM dim_categoria WHERE sk_categoria = -1
 UNION ALL SELECT 'dim_praca',       COUNT(*) FROM dim_praca       WHERE sk_praca = -1;
 
 -- =====================================================================================
---  DEPOIS DO 04 - A FATO
+--  AFTER SCRIPT 04 - FACT TABLE VALIDATION
 -- =====================================================================================
 SELECT COUNT(*) AS linhas, '4044' AS esperado FROM fato_pedido;
--- Mais que 4.044 indica JOIN duplicando; menos, JOIN descartando linha.
+-- > 4,044 indicates a JOIN is duplicating rows; < 4,044 indicates a JOIN is dropping rows.
 
--- Nenhuma FK pode ser nula, e nenhuma pode apontar para chave inexistente.
+-- No Foreign Key can be NULL, and no Foreign Key can be an orphan (pointing to a missing PK).
 SELECT 'FK nula' AS teste, COUNT(*) AS deve_ser_zero FROM fato_pedido
 WHERE sk_loja IS NULL OR sk_categoria IS NULL
    OR sk_tempo_pedido IS NULL OR sk_tempo_entrega IS NULL
@@ -120,44 +120,42 @@ UNION ALL SELECT 'FK orfa (tempo da entrega)', COUNT(*)
 FROM fato_pedido f LEFT JOIN dim_tempo d ON d.sk_tempo = f.sk_tempo_entrega
 WHERE d.sk_tempo IS NULL;
 
--- Estes valores nao sao zero, e estao corretos assim.
+-- Expected non-zero counts mapped to the -1 unknown member row:
 SELECT 'pedidos sem loja (na linha -1)' AS informativo, COUNT(*) AS valor,
        '3' AS esperado FROM fato_pedido WHERE sk_loja = -1
 UNION ALL SELECT 'entregas ainda nao feitas (tempo na -1)', COUNT(*), '1953'
 FROM fato_pedido WHERE sk_tempo_entrega = -1;
 
--- Ordem do CASE do canal (arquivo 04): o WhatsApp tem de aparecer na fato.
--- Se esta consulta voltar VAZIA, o CASE testou APP antes de WHATS e os pedidos
--- de WhatsApp foram parar dentro do App.
+-- Channel CASE evaluation order test (Script 04): 'WhatsApp' must appear in the Fact table.
+-- If this query returns EMPTY, the CASE evaluated APP before WHATS and absorbed WhatsApp into App.
 SELECT canal_pedido, COUNT(*) AS pedidos FROM fato_pedido
 WHERE canal_pedido = 'WhatsApp' GROUP BY canal_pedido;
 
--- Periodo dos pedidos: deve ir de 01/09/2023 a 31/03/2024. Data minima ou
--- maxima fora disso indica mascara de data errada.
+-- Order date range check: must span 2023-09-01 to 2024-03-31.
+-- Min or Max dates outside this window indicate an incorrect date parsing mask.
 SELECT MIN(DATE(dt_pedido)) AS primeiro_pedido, MAX(DATE(dt_pedido)) AS ultimo_pedido,
        '2023-09-01 a 2024-03-31' AS esperado FROM fato_pedido;
 
--- Os dias nunca podem ser negativos: o processo e sequencial.
+-- Lead-time days can never be negative, as the logistics workflow is sequential.
 SELECT 'dias negativos' AS teste, COUNT(*) AS deve_ser_zero FROM fato_pedido
 WHERE dias_integracao_separacao < 0 OR dias_separacao_nota < 0
    OR dias_nota_despacho < 0 OR dias_despacho_entrega < 0
    OR dias_total_ate_entrega < 0;
 
 -- =====================================================================================
---  DEPOIS DO 05 - AS RESPOSTAS
+--  AFTER SCRIPT 05 - BUSINESS QUERIES RECONCILIATION
 -- =====================================================================================
--- Confira que a soma da tabela fecha com o total da fato. Se nao fechar, algum
--- JOIN esta descartando linha.
+-- Verify that category revenue sum matches total Fact revenue. A mismatch indicates dropped rows in JOIN.
 SELECT
     (SELECT ROUND(SUM(vl_liquido)) FROM fato_pedido)             AS total_na_fato,
     (SELECT ROUND(SUM(f.vl_liquido)) FROM fato_pedido f
        JOIN dim_categoria c ON c.sk_categoria = f.sk_categoria)  AS total_pela_P2;
--- As duas colunas devem dar o mesmo numero.
+-- Both columns must return the exact same value.
 
--- Rateio da P4: com o fator, a soma por praca mais os pedidos sem loja fecha
--- com o total da rede. A ultima coluna deve dar ZERO.
--- A diferenca e arredondada UMA vez (nao cada soma em separado): assim o
--- arredondamento nao deixa sobrar 1 ou 2 reais que na verdade fecham exato.
+-- Q4 Proration Audit: prorated regional sum + unidentified store orders must equal total chain revenue.
+-- The last column must equal ZERO.
+-- The difference is rounded ONCE at the end (rather than rounding each sum separately)
+-- to avoid 1 or 2 BRL rounding residuals on an exact match.
 SELECT
     (SELECT ROUND(SUM(vl_liquido)) FROM fato_pedido) AS total_da_rede,
     (SELECT ROUND(SUM(f.vl_liquido * b.fator_publico))
@@ -172,4 +170,4 @@ SELECT
              JOIN dim_loja l ON l.sk_loja = f.sk_loja
              JOIN bridge_loja_praca b ON b.cod_loja = l.cod_loja)
         - (SELECT SUM(vl_liquido) FROM fato_pedido WHERE sk_loja = -1)
-    )                                                AS tem_de_dar_ZERO;
+    )                                                    AS tem_de_dar_ZERO;
