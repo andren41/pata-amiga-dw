@@ -1,5 +1,8 @@
--- Script 03: Preenchimento das Dimensões (Categoria e Praça) e da Tabela Ponte
--- Projeto: Data Warehouse Pata Amiga
+-- ============================================================================
+-- SCRIPT 03: DIMENSION & BRIDGE TABLES POPULATION
+-- Purpose: Clean, standardize, and populate `dim_categoria`, `dim_praca`,
+--          and the N:N proration bridge table `bridge_loja_praca`.
+-- ============================================================================
 
 USE dw_pata_amiga;
 
