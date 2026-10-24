@@ -31,7 +31,7 @@ USE dw_pata_amiga;
 
 DROP TABLE IF EXISTS dim_tempo;
 CREATE TABLE dim_tempo (
-    sk_tempo      INT PRIMARY KEY,   -- AAAAMMDD: a propria data em numero
+    sk_tempo      INT PRIMARY KEY,   -- YYYYMMDD: numeric representation of the date itself
     data          DATE,
     ano           INT,
     mes           INT,
@@ -285,16 +285,17 @@ INSERT INTO dim_tempo VALUES
 (20240422,'2024-04-22',2024,4,22,'2024-04','Abril',2,'Segunda','Nao');
 
 -- =====================================================================================
---  DIM_LOJA  (pronta)
+--  DIM_LOJA  (pre-populated static dimension)
 -- =====================================================================================
---  32 lojas mais a linha -1. O porte sai da area de venda: Pequena < 150 m2,
---  Media 150 a 400, Grande > 400. E por ele que a P1 e a P3 agrupam.
---  populacao_cidade e o denominador da P5: itens por mil habitantes.
+--  32 stores plus the -1 default row. Store size (porte) is derived from sales area:
+--  Pequena (Small) < 150 m2, Media (Medium) 150 to 400 m2, Grande (Large) > 400 m2.
+--  Used as the grouping dimension in Q1 and Q2.
+--  populacao_cidade serves as the denominator in Q5 (items sold per 1,000 inhabitants).
 DROP TABLE IF EXISTS dim_loja;
 CREATE TABLE dim_loja (
     sk_loja          INT AUTO_INCREMENT PRIMARY KEY,
     cod_loja         VARCHAR(10),
-    chave_loja       VARCHAR(80),   -- nome padronizado: caixa alta, sem acento
+    chave_loja       VARCHAR(80),   -- standardized store name: uppercase, unaccented
     nome_loja        VARCHAR(80),
     cidade           VARCHAR(60),
     uf               VARCHAR(3),
@@ -347,26 +348,26 @@ INSERT INTO dim_loja (cod_loja, chave_loja, nome_loja, cidade, uf, mesorregiao,
 ('LJ-032','PATA AMIGA SAO MIGUEL DO OESTE','Pata Amiga Sao Miguel do Oeste','São Miguel do Oeste','SC','Oeste Catarinense',41520,170,'Media','Bronze','Padrao');
 
 -- =====================================================================================
---  AS TABELAS QUE VOCE VAI PREENCHER  -  ja criadas, e vazias
+--  DDL SKELETON FOR DYNAMIC DIMENSIONS, BRIDGE, AND FACT TABLES (Populated in 03 & 04)
 -- =====================================================================================
---  Abaixo estao os CREATE TABLE das quatro tabelas. Elas ficam vazias; voce as
---  preenche nos arquivos 03 e 04.
+--  Below are the CREATE TABLE statements for the four remaining tables.
+--  They are initialized empty here and populated in scripts 03 and 04.
 --
---  Os comentarios de cada coluna sao a especificacao do que gravar ali.
+--  Inline column comments specify the exact business rules and grain for each field.
 
 -- -------------------------------------------------------------------------------------
---  DIM_CATEGORIA        grao: UMA GRAFIA DA ORIGEM
+--  DIM_CATEGORIA        grain: ONE RAW SOURCE SPELLING VARIATION
 -- -------------------------------------------------------------------------------------
 DROP TABLE IF EXISTS dim_categoria;
 CREATE TABLE dim_categoria (
     sk_categoria     INT AUTO_INCREMENT PRIMARY KEY,
-    categoria_origem VARCHAR(50),   -- a grafia crua, como veio da origem
-    nome_categoria   VARCHAR(30),   -- o nome padronizado: e por ele que se agrupa
-    grupo_categoria  VARCHAR(20)    -- Alimentacao, Saude e Higiene, Bem-estar
+    categoria_origem VARCHAR(50),   -- raw category string exactly as imported from staging
+    nome_categoria   VARCHAR(30),   -- standardized canonical category name used for GROUP BY
+    grupo_categoria  VARCHAR(20)    -- macro-group: Alimentacao, Saude e Higiene, Bem-estar
 );
 
 -- -------------------------------------------------------------------------------------
---  DIM_PRACA            grao: UMA PRACA DE ATENDIMENTO
+--  DIM_PRACA            grain: ONE SERVICE REGION (PRACA)
 -- -------------------------------------------------------------------------------------
 DROP TABLE IF EXISTS dim_praca;
 CREATE TABLE dim_praca (
@@ -374,53 +375,53 @@ CREATE TABLE dim_praca (
     cod_praca          VARCHAR(10),
     nome_praca         VARCHAR(60),
     regional           VARCHAR(30),
-    domicilios_com_pet INT          -- vem como '148.000': tire o ponto de milhar
+    domicilios_com_pet INT          -- arrives as '148.000' in staging: strip thousand separator '.'
 );
 
 -- -------------------------------------------------------------------------------------
---  BRIDGE_LOJA_PRACA    grao: UMA LOJA x UMA PRACA
+--  BRIDGE_LOJA_PRACA    grain: ONE STORE x ONE SERVICE REGION
 -- -------------------------------------------------------------------------------------
---  A tabela PONTE. Uma loja entrega em mais de uma praca, e uma FK so comporta
---  um valor - entao a ligacao N:N vive aqui, com o fator de rateio dentro.
+--  N:N Bridge Table. Because a single store serves multiple regions and a standard FK
+--  only holds one value, the N:N relationship is resolved here alongside the proration weight.
 --
---  ATENCAO: a ponte e ligada pelo COD DA LOJA, e nao pela sk_loja.
+--  NOTE: The bridge links to the store via its natural business key (cod_loja), not sk_loja.
 DROP TABLE IF EXISTS bridge_loja_praca;
 CREATE TABLE bridge_loja_praca (
     cod_loja      VARCHAR(10),
     sk_praca      INT,
-    fator_publico DECIMAL(6,4),   -- 0,85 = 85% do publico daquela loja
+    fator_publico DECIMAL(6,4),   -- e.g., 0.8500 = 85% of that store's customer audience
     PRIMARY KEY (cod_loja, sk_praca)
 );
 
 -- -------------------------------------------------------------------------------------
---  FATO_PEDIDO          grao: UM PEDIDO       4.044 linhas
+--  FATO_PEDIDO          grain: ONE ORDER        4,044 rows
 -- -------------------------------------------------------------------------------------
 DROP TABLE IF EXISTS fato_pedido;
 CREATE TABLE fato_pedido (
     sk_pedido        INT AUTO_INCREMENT PRIMARY KEY,
-    numero_pedido    VARCHAR(20),   -- codigo do pedido, sem atributos
+    numero_pedido    VARCHAR(20),   -- degenerate order identifier
 
-    -- as duas FKs de tempo: dois papeis da MESMA dim_tempo
+    -- Two date Foreign Keys: Role-Playing references to the SAME dim_tempo table
     sk_tempo_pedido  INT NOT NULL,
-    sk_tempo_entrega INT NOT NULL,  -- vale -1 se a entrega ainda nao aconteceu
+    sk_tempo_entrega INT NOT NULL,  -- set to -1 if delivery has not yet occurred
 
-    -- as demais FKs. Nenhuma pode ser nula: quando falta, vale -1
+    -- Remaining Foreign Keys. None can be NULL: missing values map to -1
     sk_loja          INT NOT NULL,
     sk_categoria     INT NOT NULL,
 
-    -- atributos que ficam na fato
-    -- desconto e canal sao dois dominios de poucos valores. Como nada esta
-    -- pendurado neles, ficam aqui na fato, padronizados uma vez no arquivo 04.
+    -- Degenerate dimensions stored directly in the Fact table:
+    -- Discount flag and order channel are low-cardinality domains with no extra attributes,
+    -- so they are standardized once during the Fact table load in script 04.
     houve_desconto   VARCHAR(15),   -- Sim / Nao / Nao Informado
     canal_pedido     VARCHAR(20),   -- App / Site / Loja Fisica / Telefone / WhatsApp
-    dt_pedido        DATETIME,   -- data e hora do pedido
+    dt_pedido        DATETIME,      -- order timestamp
 
-    -- metricas ADITIVAS
+    -- Additive metrics
     qt_itens         INT,
     vl_liquido       DECIMAL(15,2),
 
-    -- os lags do processo, em dias. Calculados UMA vez, aqui na carga.
-    -- Etapa nao cumprida grava NULL, nunca 0.
+    -- Process lead-time lags (in days), pre-calculated once during load.
+    -- Uncompleted stages store NULL, never 0.
     dias_integracao_separacao INT,
     dias_separacao_nota       INT,
     dias_nota_despacho        INT,
@@ -429,9 +430,8 @@ CREATE TABLE fato_pedido (
 );
 
 -- =====================================================================================
---  CONFERENCIA DO QUE VEIO PRONTO
+--  STATIC DIMENSIONS ROW COUNT VERIFICATION
 -- =====================================================================================
 SELECT 'dim_tempo' AS tabela, COUNT(*) AS linhas, '236  (235 dias + a -1)' AS esperado
 FROM dim_tempo
 UNION ALL SELECT 'dim_loja', COUNT(*), '33  (32 lojas + a -1)' FROM dim_loja;
-
