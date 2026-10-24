@@ -1,190 +1,203 @@
-# Pata Amiga — Análise de Dados (Mini-Projeto, Módulo 2 · Semana 7)
+# 🐾 Pata Amiga — Data Warehouse & Retail Analytics
 
-Modelo dimensional e análise dos 4.044 pedidos da Pata Amiga (rede de pet shops de Santa Catarina) entre setembro/2023 e março/2024, construído a partir de três bases de origem desnormalizadas (e-commerce, cadastro de lojas e praças de atendimento).
+Dimensional data model (Star Schema) and analytical study of **4,044 orders** from **Pata Amiga** (a 32-store pet shop chain in Santa Catarina, Brazil) recorded between **September 2023 and March 2024**, built from three denormalized source systems (e-commerce platform, franchise store registry, and service region spreadsheets).
 
-## Sumário
-1. [Contextualização](#1-contextualização)
-2. [Diagnóstico da origem](#2-diagnóstico-da-origem-tarefa-1)
-3. [Modelo dimensional](#3-modelo-dimensional)
-4. [Decisões de tratamento](#4-decisões-de-tratamento)
-5. [Como reproduzir o banco do zero](#5-como-reproduzir-o-banco-do-zero)
-6. [As cinco respostas](#6-as-cinco-respostas)
-7. [Recomendação final](#7-recomendação-final)
-8. [Vídeo](#8-vídeo)
-
----
-
-## 1. Contextualização
-A Pata Amiga é uma rede catarinense de pet shops com 32 lojas. Em setembro de 2023, a rede unificou a operação de pedidos (app, site, telefone, WhatsApp e loja física) com a entrega, gerando 4.044 pedidos em sete meses. 
-
-Esses dados nasceram em três sistemas que não se falam — a plataforma de e-commerce, o cadastro de lojas do franchising e a planilha de praças de atendimento do time de expansão — cada um com sua própria bagunça de formatação. Este projeto organiza essas três origens num modelo dimensional (esquema estrela) e responde cinco perguntas de negócio da diretoria: onde está o gargalo da entrega, qual categoria sustenta o faturamento, se a política de desconto é consistente entre canais, onde está concentrado o faturamento por praça, e onde abrir a próxima loja.
+## Table of Contents
+1. [Context & Business Problem](#1-context--business-problem)
+2. [Source Data Diagnostics](#2-source-data-diagnostics)
+3. [Dimensional Model (Star Schema)](#3-dimensional-model-star-schema)
+4. [ETL & Data Treatment Decisions](#4-etl--data-treatment-decisions)
+5. [How to Reproduce the Database from Scratch](#5-how-to-reproduce-the-database-from-scratch)
+6. [The Five Business Answers](#6-the-five-business-answers)
+7. [Final Executive Recommendation](#7-final-executive-recommendation)
 
 ---
 
-## 2. Diagnóstico da origem (Tarefa 1)
-Levantado a partir das três tabelas de staging (`stg_pedido`, `stg_loja`, `stg_loja_praca`), antes de qualquer tratamento:
+## 1. Context & Business Problem
 
-| Item | Valor |
-|---|---|
-| **Linhas em stg_pedido / stg_loja / stg_loja_praca** | 4.044 / 32 / 48 |
-| **Grafias distintas de nome de loja** | 50 |
-| **Grafias distintas de categoria de produto** | 18 |
-| **Grafias distintas de "Houve Desconto"** | 12 |
-| **Grafias distintas de canal do pedido** | 8 |
-| **Pedidos sem Cod Loja preenchido** | 1.575 (~39%) |
-| **Pedidos sem Loja-Nome preenchido** (loja não identificável) | 3 |
-| **Marco "Separação" em branco** | 1.077 |
-| **Marco "Nota Fiscal" em branco** | 1.338 |
-| **Marco "Despacho" em branco** | 1.665 |
-| **Marco "Entrega" em branco** | 1.953 |
+**Pata Amiga** is a pet shop chain in Santa Catarina operating **32 stores**. In September 2023, the company unified its order operations (mobile app, website, phone, WhatsApp, and physical stores) with its delivery logistics, generating **4,044 orders** over seven months.
 
-> **Nota importante:** Os 1.575 pedidos sem `Cod Loja` não significam 1.575 lojas não identificadas — o modelo resolve a loja pelo nome (`Loja-Nome`), não pelo código, e o nome está presente na grande maioria desses casos. Só 3 pedidos ficam de fato sem loja identificável (nome também vazio), e são esses 3 que caem na linha -1 da dimensão. Os marcos em branco não são erro de carga: representam processos ainda em aberto (a janela de dados termina antes de o pedido concluir todas as etapas).
+These records originated across three disconnected systems — the **e-commerce platform**, the **franchising store registry**, and the **expansion team's service region (*praças*) spreadsheet** — each suffering from inconsistent formatting and lack of standardization. This project integrates these three sources into a **Dimensional Data Warehouse (Star Schema)** in MySQL and answers five core executive questions:
+1. Where is the delivery bottleneck?
+2. Which product category drives total revenue?
+3. Is the discount policy consistent across sales channels?
+4. Where is revenue concentrated by service region (*praça*)?
+5. Where should the next store be opened?
 
 ---
 
-## 3. Modelo dimensional
+## 2. Source Data Diagnostics
 
-![Modelo Dimensional](diagrama/modelo-estrela.png)
+Audited directly from the three raw staging tables (`stg_pedido`, `stg_loja`, `stg_loja_praca`) prior to any data cleaning (`00-conferencia.sql`):
 
-* Uma fato (`fato_pedido`, grão = 1 linha por pedido) e quatro dimensões: `dim_tempo`, `dim_loja`, `dim_categoria` ligadas diretamente à fato, e `dim_praca` ligada indiretamente através da tabela ponte `bridge_loja_praca` (única ligação N:N do modelo, pois uma loja atende mais de uma praça).
-* `dim_tempo` é usada duas vezes na fato — como role-playing dimension — para representar a data do pedido (`sk_tempo_pedido`) e a data da entrega (`sk_tempo_entrega`) com a mesma tabela de calendário.
-* Toda dimensão tem uma linha `-1` = "Não Informado", garantindo que nenhuma FK na fato fique nula mesmo quando o dado de origem falta.
+| Diagnostic Metric | Value |
+| :--- | :--- |
+| Rows in `stg_pedido` / `stg_loja` / `stg_loja_praca` | 4,044 / 32 / 48 |
+| Distinct spellings of Store Name | 50 |
+| Distinct spellings of Product Category | 18 |
+| Distinct spellings of "Discount Applied" (`Houve Desconto`) | 12 |
+| Distinct spellings of Order Channel | 8 |
+| Orders missing Store Code (`Cod Loja`) | 1,575 (~39%) |
+| Orders missing Store Name (`Loja-Nome` — unidentifiable store) | 3 |
+| Blank "Picking" (`Separação`) milestone | 1,077 |
+| Blank "Invoice" (`Nota Fiscal`) milestone | 1,338 |
+| Blank "Dispatch" (`Despacho`) milestone | 1,665 |
+| Blank "Delivery" (`Entrega`) milestone | 1,953 |
 
----
-
-## 4. Decisões de tratamento
-
-* **Datas:** A data do pedido vem no formato americano com AM/PM (`11/16/2023 02:30 PM`), convertida com `STR_TO_DATE(coluna, '%m/%d/%Y %h:%i %p')`. Os quatro marcos da entrega já vêm em ISO (`2023-11-16`), bastando `DATE()`. Usar a máscara brasileira não gera erro, mas devolve NULL ou datas trocadas em silêncio — por isso a máscara certa foi conferida antes (as 4.044 datas batem com a máscara americana).
-* **Valores em dinheiro e quantidades:** Vazio ou `-` vira `NULL`, nunca `0` (uma etapa "não aconteceu" é diferente de "aconteceu e custou zero"). O valor líquido convivia em três formatos (`R$ 1.850,00`, `1850.00`, `1.200`) e foi tratado com expressão condicional antes do `CAST` para DECIMAL.
-* **Categoria de produto:** 18 grafias brutas mapeadas para 7 categorias padronizadas via `CASE WHEN`. A ordem importa: `MED` é testado antes de `RA`, porque "Ração Medicamentosa" contém "RA" e cairia na categoria errada. A collation padrão do MySQL já ignora acento e caixa, dispensando normalização extra.
-* **Nome da loja:** Padronizado sempre **antes** do JOIN com `dim_loja`. Um `REPLACE` mecânico removeu o sufixo `/SC` e espaços duplos; depois um `CASE` manual resolveu as 3 grafias restantes (digitação, apelido e abreviação).
-* **Desconto e canal:** Como são domínios pequenos sem atributos, foram padronizados direto na carga da fato. No canal, a ordem importa: "WHATSAPP" contém "APP", então `WHATS` é testado antes de `APP`.
-* **Rateio da praça:** A tabela ponte guarda o `fator_publico` (somando 1,00 por loja). O faturamento é multiplicado pelo fator antes de somar por praça, impedindo que uma loja que atende duas praças seja contada em dobro.
-
----
-
-## 5. Como reproduzir o banco do zero
-Execute os scripts na pasta `sql/`, nesta ordem, em um MySQL 8.0:
-
-| Ordem | Arquivo | O que faz |
-|---|---|---|
-| **1** | `01-carga-staging.sql` | Cria o banco `dw_pata_amiga` e carrega as 3 tabelas de staging originais. |
-| **2** | `02-dimensoes-prontas.sql` | Cria e carrega `dim_tempo` (236 linhas) e `dim_loja` (33 linhas); cria o esqueleto das próximas tabelas. |
-| **3** | `03-dimensoes.sql` | Constrói `dim_categoria`, `dim_praca` e `bridge_loja_praca`. |
-| **4** | `04-fato.sql` | Constrói `fato_pedido` (4.044 linhas). |
-| **5** | `05-perguntas.sql` | Executa as 5 consultas de negócio. |
-
-> *(Nota: `00-conferencia.sql` não faz parte da entrega — é apenas um script de auditoria).*
-> ⚠️ **Atenção ao charset da conexão:** Ao rodar via linha de comando, force utf8mb4 (`mysql -u root --default-character-set=utf8mb4 < 01-carga-staging.sql`). Sem isso, o client pode conectar em latin1 e corromper os acentos na carga.
+> **Important Note:** The 1,575 orders missing `Cod Loja` do **not** mean 1,575 unidentified stores — the pipeline resolves store identity via the standardized store name (`Loja-Nome`), which is present in almost all cases. Only **3 orders** truly lack an identifiable store (both code and name are blank), and those 3 are mapped to the `-1` surrogate row in the dimension. Furthermore, blank logistics milestones are not ingestion errors: they represent open/in-progress orders whose subsequent stages had not yet occurred when the data extraction window closed.
 
 ---
 
-## 6. As cinco respostas
+## 3. Dimensional Model (Star Schema)
 
-### P1 — Onde está o gargalo da entrega?
+![Dimensional Model - Star Schema](diagrama/modelo-estrela.png)
 
-| Porte | Pedidos | Integ.→Separação | Separação→Nota | Nota→Despacho | Despacho→Entrega | Total até entrega |
-|---|---|---|---|---|---|---|
-| **Grande** | 1.763 | 2,0 | 0,6 | 3,3 | 2,0 | 7,9 |
-| **Média** | 1.663 | 2,0 | 0,6 | 3,3 | 2,0 | 8,0 |
-| **Pequena** | 615 | 3,0 | 0,7 | **8,5** | 2,9 | **15,2** |
-| (sem loja) | 3 | 2,0 | 0,0 | 4,0 | 3,0 | 8,5 |
-
-*(Médias em dias, ignorando etapas não cumpridas).*
-
-O gargalo do processo, nos três portes, é o mesmo intervalo: **nota fiscal → despacho para a transportadora**. Mas ele não é igualmente distribuído: em lojas Pequenas esse intervalo sozinho leva 8,5 dias e puxa o tempo total de entrega para 15,2 dias (quase o dobro da rede). O problema não é a entrega em si; é o que acontece antes de a transportadora ser acionada.
-
-### P2 — Qual categoria concentra o faturamento?
-
-| Categoria | Faturamento | % do total |
-|---|---|---|
-| **Ração** | R$ 1.076.202,55 | **60,0%** |
-| Medicamento | R$ 305.904,03 | 17,1% |
-| Petisco | R$ 128.590,16 | 7,2% |
-| Serviço | R$ 94.001,37 | 5,2% |
-| Higiene | R$ 92.314,45 | 5,2% |
-| Acessório | R$ 64.661,39 | 3,6% |
-| Brinquedo | R$ 31.634,56 | 1,8% |
-
-**Ração** concentra 60% do faturamento da rede (mais que as outras seis categorias somadas) e é a categoria campeã nos três portes de loja sem exceção. É o produto-âncora da rede como um todo.
-
-### P3 — O desconto funciona igual em todo canal?
-
-| Canal | Ticket médio SEM desc. | Ticket médio COM desc. | % do faturamento |
-|---|---|---|---|
-| **App** | R$ 167,63 | R$ 488,04 | **30,8%** |
-| **Site** | R$ 189,68 | R$ 501,92 | 25,1% |
-| **Loja Física** | R$ 197,55 | R$ 494,04 | 20,1% |
-| **WhatsApp** | R$ 179,26 | R$ 514,33 | 10,5% |
-| **Telefone** | R$ 195,23 | R$ 514,02 | 6,9% |
-
-Em todos os canais o ticket médio com desconto é de **2,5 a 3 vezes maior** que sem desconto. Não há um canal onde o desconto "derruba" o ticket. Ressalva: os dados mostram correlação, não causa — não dá para afirmar que o desconto provoca o ticket maior; é possível que a loja conceda desconto preferencialmente em pedidos que já são grandes.
-
-### P4 — Qual praça de atendimento concentra o faturamento?
-
-| Praça | Domicílios com pet | Faturamento rateado |
-|---|---|---|
-| **Vale do Itajaí** | 148.000 | R$ 633.746,09 |
-| Grande Florianópolis | 132.000 | R$ 283.546,75 |
-| Norte Industrial | 96.000 | R$ 175.431,90 |
-| Litoral Sul | 58.000 | R$ 137.051,20 |
-| Litoral Norte | 61.000 | R$ 128.872,75 |
-| Extremo Oeste | 63.000 | R$ 98.359,18 |
-| Carbonífera | 67.000 | R$ 88.707,42 |
-| Serra Catarinense | 44.000 | R$ 80.477,64 |
-| Meio-Oeste | 51.000 | R$ 58.955,63 |
-| Foz do Itajaí | 74.000 | R$ 46.749,72 |
-| Planalto Norte | 33.000 | R$ 31.100,84 |
-| Planalto Serrano | 29.000 | R$ 29.323,10 |
-
-*(Soma rateada pelo `fator_publico` da ponte + R$ 986,30 sem loja identificada = R$ 1.793.308,51, batendo o total da rede).*
-
-O **Vale do Itajaí** fatura ~R$4,28 por domicílio, quase o dobro da segunda colocada. A praça não lidera só porque é grande — ela converte desproporcionalmente mais que seu tamanho de mercado sugeriria.
-
-### P5 — Onde abrir a próxima loja, e limitações dos dados
-
-**Top Lojas por demanda relativa:**
-
-| Loja | População | Itens/mil hab. | Tempo médio |
-|---|---|---|---|
-| Rio dos Cedros | 11.322 | **41,9** | 14,2 dias |
-| Presidente Getúlio | 16.359 | **34,8** | 14,2 dias |
-| Ibirama | 18.613 | **32,1** | 15,4 dias |
-| Itapoá | 20.586 | **25,9** | 15,4 dias |
-| S. Amaro da Imperatriz | 22.357 | **23,7** | 15,9 dias |
-
-As lojas com maior demanda relativa ao tamanho da cidade são consistemente **cidades pequenas** — e são justamente essas que carregam os piores tempos de entrega, reforçando o achado da P1.
-
-**Faturamento por faixa de franquia ATUAL:**
-
-| Faixa | Faturamento | % do total |
-|---|---|---|
-| Ouro | R$ 1.011.264,38 | 56,4% |
-| Diamante | R$ 382.209,74 | 21,3% |
-| Prata | R$ 314.812,03 | 17,6% |
-| Bronze | R$ 84.036,06 | 4,7% |
-
-*Limitação:* O cadastro guarda apenas a faixa atual (o histórico foi sobrescrito). Os 56% atribuídos a "Ouro" descrevem o faturamento da rede configurada *hoje*, não respondendo quanto a loja vendeu historicamente sob a mesma faixa.
-
-**O que ficou de fora (medido, não escondido):**
-
-| O que | Quantidade |
-|---|---|
-| Pedidos sem loja identificada | 3 |
-| Entregas ainda não concluídas na janela | 1.953 (48,3%) |
-| Pedidos com quantidade de itens em branco | 257 |
-| Pedidos com valor em branco | 121 |
+* **Fact & Dimensions:** One central fact table (`fato_pedido`, grain = 1 row per order) and four dimensions: `dim_tempo` (date/calendar), `dim_loja` (store), and `dim_categoria` (category) linked directly to the fact table, plus `dim_praca` (service region) linked indirectly via the bridge table `bridge_loja_praca` (handling the model's only N:N relationship, as a single store can serve multiple regions).
+* **Role-Playing Dimension:** `dim_tempo` is referenced twice in the fact table to represent both the **order date** (`sk_tempo_pedido`) and the **delivery date** (`sk_tempo_entrega`) using a single shared calendar table.
+* **Referential Integrity (`-1` Unknown Member):** Every dimension contains a default `-1 = "Não Informado"` (*Not Informed*) row, ensuring that no Foreign Key (`FK`) in the fact table is ever `NULL` when source data is missing.
 
 ---
 
-## 7. Recomendação final
-Os dados apontam para duas coisas ao mesmo tempo:
+## 4. ETL & Data Treatment Decisions
 
-* **Onde expandir:** A demanda relativa é mais forte em cidades pequenas (Rio dos Cedros, Presidente Getúlio e Ibirama). A próxima loja tem mais chance de sucesso em uma cidade pequena com perfil semelhante, possivelmente na região do Vale do Itajaí, que mostrou capacidade de conversão acima da média.
-* **O que resolver antes:** Essas mesmas lojas pequenas sofrem o gargalo operacional da P1 (8,5 dias parados entre nota fiscal e despacho). Abrir uma loja nova desse porte sem endereçar esse gargalo reproduzirá o problema de entregas de mais de 15 dias.
-* **O que não se pode afirmar:** Não é possível apontar concorrência de mercado de outras marcas; não dá para afirmar que a faixa "Ouro" gera mais faturamento (pode ser o inverso: quem fatura mais vira Ouro); e os dados apontam *onde* o tempo se perde no gargalo operacional, mas não a causa-raiz (equipe, logística, etc).
+* **Dates:** Raw order dates arrive in US format with AM/PM (`11/16/2023 02:30 PM`) and are parsed via `STR_TO_DATE(coluna, '%m/%d/%Y %h:%i %p')`. The four logistics milestones already arrive in ISO format (`2023-11-16`), requiring only `DATE()`. Applying a Brazilian date mask (`%d/%m/%Y`) would not throw an error, but would silently return `NULL` or inverted dates — therefore, the US mask was verified beforehand against all 4,044 records.
+* **Monetary Values & Quantities:** Blank strings or `-` are converted to `NULL`, never `0` (a stage that "did not happen" is analytically distinct from "happened at zero cost"). Net order value (`valor_liquido`) coexisted in three string formats (`R$ 1.850,00`, `1850.00`, `1.200`) and was sanitized using conditional string expressions prior to casting to `DECIMAL`.
+* **Product Categories:** 18 raw spelling variations were mapped into 7 canonical categories via `CASE WHEN`. **Evaluation order matters:** `MED` is evaluated before `RA` because *"Ração Medicamentosa"* (Medicated Pet Food) contains the substring `"RA"` and would otherwise be misclassified as standard pet food. MySQL's default collation handles case and accent insensitivity automatically.
+* **Store Names:** Always standardized prior to joining with `dim_loja`. A mechanical `REPLACE` strips the `/SC` state suffix and double spaces; subsequently, a targeted `CASE` statement resolves the 3 remaining anomalies (typos, nicknames, and abbreviations).
+* **Discounts & Channels:** Because these are small, low-cardinality domains without descriptive attributes, they were standardized directly as degenerate dimensions inside the fact table load. In the channel rules, **evaluation order matters:** `"WHATSAPP"` contains `"APP"`, so `WHATS` is evaluated prior to `APP`.
+* **Service Region Proration (*Rateio*):** The bridge table `bridge_loja_praca` stores an audience weight factor (`fator_publico`, summing to `1.00` per store). Revenue is multiplied by this factor before aggregating by region, preventing double-counting when a store serves two regions.
 
 ---
 
-## 8. Vídeo
-[Link do Vídeo](https://drive.google.com/file/d/1u2Lmr6IT_pepVpct1PPENCNOoh9mJpIC/view?usp=sharing)
+## 5. How to Reproduce the Database from Scratch
+
+Execute the scripts inside the `sql/` folder in the exact order below using **MySQL 8.0+**:
+
+| Order | Script File | Description |
+| :--- | :--- | :--- |
+| **1** | `01-carga-staging.sql` | Creates the `dw_pata_amiga` database and loads the 3 raw staging tables. |
+| **2** | `02-dimensoes-prontas.sql` | Creates and populates `dim_tempo` (236 rows) and `dim_loja` (33 rows); creates the DDL skeleton for remaining tables. |
+| **3** | `03-dimensoes.sql` | Builds and populates `dim_categoria`, `dim_praca`, and `bridge_loja_praca`. |
+| **4** | `04-fato.sql` | Transforms and populates `fato_pedido` (4,044 rows). |
+| **5** | `05-perguntas.sql` | Executes the 5 analytical business queries. |
+
+*(Note: `00-conferencia.sql` is a standalone exploratory auditing script used for staging diagnostics).*
+
+> ⚠️ **Connection Charset Warning:** When executing via CLI, explicitly enforce `utf8mb4` so the client does not default to `latin1` and corrupt accented characters during load:
+>
+>     mysql -u root --default-character-set=utf8mb4 < sql/01-carga-staging.sql
+
+---
+
+## 6. The Five Business Answers
+
+### Q1 — Where is the delivery bottleneck?
+
+| Store Size (*Porte*) | Orders | Order → Picking | Picking → Invoice | Invoice → Dispatch | Dispatch → Delivery | Total Lead Time |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Large (*Grande*)** | 1,763 | 2.0 | 0.6 | 3.3 | 2.0 | **7.9 days** |
+| **Medium (*Média*)** | 1,663 | 2.0 | 0.6 | 3.3 | 2.0 | **8.0 days** |
+| **Small (*Pequena*)** | 615 | 3.0 | 0.7 | **8.5** | 2.9 | **15.2 days** |
+| *(Unidentified store)* | 3 | 2.0 | 0.0 | 4.0 | 3.0 | **8.5 days** |
+
+*(Averages in days, excluding uncompleted milestones).*
+
+Across all three store sizes, the longest stage is the exact same interval: **Invoice Issuance → Carrier Dispatch** (`Nota → Despacho`). However, it is heavily skewed: in **Small stores**, this single internal stage takes **8.5 days**, pushing total delivery time to **15.2 days** (nearly double the chain average). The bottleneck is not last-mile carrier transit, but internal store handoff before the carrier is even triggered.
+
+---
+
+### Q2 — Which category drives total revenue?
+
+| Category (*Categoria*) | Net Revenue (BRL) | % of Total |
+| :--- | :--- | :--- |
+| **Pet Food (*Ração*)** | R$ 1,076,202.55 | **60.0%** |
+| **Medication (*Medicamento*)** | R$ 305,904.03 | **17.1%** |
+| **Treats (*Petisco*)** | R$ 128,590.16 | **7.2%** |
+| **Services (*Serviço*)** | R$ 94,001.37 | **5.2%** |
+| **Hygiene (*Higiene*)** | R$ 92,314.45 | **5.2%** |
+| **Accessories (*Acessório*)** | R$ 64,661.39 | **3.6%** |
+| **Toys (*Brinquedo*)** | R$ 31,634.56 | **1.8%** |
+
+**Pet Food (*Ração*)** accounts for **60% of the chain's total revenue** (more than all other six categories combined) and ranks #1 across all store sizes without exception, acting as the core anchor product for the business.
+
+---
+
+### Q3 — Does the discount policy perform equally across channels?
+
+| Order Channel | Avg. Ticket WITHOUT Discount | Avg. Ticket WITH Discount | % of Total Revenue |
+| :--- | :--- | :--- | :--- |
+| **Mobile App** | R$ 167.63 | R$ 488.04 | 30.8% |
+| **Website (*Site*)** | R$ 189.68 | R$ 501.92 | 25.1% |
+| **Physical Store (*Loja Física*)** | R$ 197.55 | R$ 494.04 | 20.1% |
+| **WhatsApp** | R$ 179.26 | R$ 514.33 | 10.5% |
+| **Phone (*Telefone*)** | R$ 195.23 | R$ 514.02 | 6.9% |
+
+Across every channel, the average ticket with a discount is **2.5x to 3x higher** than without a discount; no channel experiences ticket erosion from promotions. **Analytical Caveat (Correlation vs. Causation):** Observational order data demonstrates correlation, not causation — we cannot claim that discounts *cause* larger baskets, as stores may preferentially grant discounts to orders that are already large (e.g., progressive volume discounts).
+
+---
+
+### Q4 — Which service region (*praça*) concentrates revenue?
+
+| Service Region (*Praça*) | Households with Pets | Prorated Revenue (BRL) |
+| :--- | :--- | :--- |
+| **Vale do Itajaí** | 148,000 | **R$ 633,746.09** |
+| **Grande Florianópolis** | 132,000 | R$ 283,546.75 |
+| **Norte Industrial** | 96,000 | R$ 175,431.90 |
+| **Litoral Sul** | 58,000 | R$ 137,051.20 |
+| **Litoral Norte** | 61,000 | R$ 128,872.75 |
+| **Extremo Oeste** | 63,000 | R$ 98,359.18 |
+| **Carbonífera** | 67,000 | R$ 88,707.42 |
+| **Serra Catarinense** | 44,000 | R$ 80,477.64 |
+| **Meio-Oeste** | 51,000 | R$ 58,955.63 |
+| **Foz do Itajaí** | 74,000 | R$ 46,749.72 |
+| **Planalto Norte** | 33,000 | R$ 31,100.84 |
+| **Planalto Serrano** | 29,000 | R$ 29,323.10 |
+
+*(Sum prorated by `fator_publico` in the bridge table + R$ 986.30 from the 3 unidentified store orders = **R$ 1,793,308.51**, matching exact chain net revenue).*
+
+**Vale do Itajaí** generates **~R$ 4.28 per pet-owning household**, nearly double the runner-up region. It leads not merely because of market size, but because it converts disproportionately higher revenue per household.
+
+---
+
+### Q5 — Where to open the next store, and data limitations
+
+**Top Stores by Relative Demand (Items per 1,000 inhabitants):**
+
+| Store City | Population | Items / 1,000 Inhab. | Avg. Delivery Time |
+| :--- | :--- | :--- | :--- |
+| **Rio dos Cedros** | 11,322 | **41.9** | 14.2 days |
+| **Presidente Getúlio** | 16,359 | **34.8** | 14.2 days |
+| **Ibirama** | 18,613 | **32.1** | 15.4 days |
+| **Itapoá** | 20,586 | **25.9** | 15.4 days |
+| **S. Amaro da Imperatriz** | 22,357 | **23.7** | 15.9 days |
+
+Stores with the highest per-capita demand are consistently located in **small municipalities** — and these are the exact stores suffering from the worst delivery times (~14–16 days), reinforcing finding Q1.
+
+**Revenue by CURRENT Franchise Tier (*Faixa de Franquia*):**
+
+| Franchise Tier | Net Revenue (BRL) | % of Total |
+| :--- | :--- | :--- |
+| **Gold (*Ouro*)** | R$ 1,011,264.38 | 56.4% |
+| **Diamond (*Diamante*)** | R$ 382,209.74 | 21.3% |
+| **Silver (*Prata*)** | R$ 314,812.03 | 17.6% |
+| **Bronze** | R$ 84,036.06 | 4.7% |
+
+* **Historical Tracking Limitation (Type 1 Overwrite):** The source store registry only stores a franchise's *current* tier (historical transitions were overwritten). Thus, the 56.4% attributed to "Gold" reflects revenue generated by stores currently classified as Gold, not what they sold while historically operating under that tier.
+
+**Explicitly Measured Data Gaps (Accounted for, not hidden):**
+
+| Data Gap / Incomplete Record | Record Count |
+| :--- | :--- |
+| Orders without identifiable store | 3 |
+| Deliveries not yet completed within the data window | 1,953 (48.3%) |
+| Orders with blank item quantity | 257 |
+| Orders with blank monetary value | 121 |
+
+---
+
+## 7. Final Executive Recommendation
+
+The data points to two simultaneous strategic actions:
+* **Where to Expand:** Relative demand per capita is strongest in smaller cities (such as *Rio dos Cedros*, *Presidente Getúlio*, and *Ibirama*). Opening the next store has the highest probability of success in a small municipality with a similar demographic profile, particularly within the **Vale do Itajaí** region, which demonstrates superior household conversion.
+* **What to Fix Before Expanding:** Those exact same small-format stores suffer from the severe operational bottleneck identified in Q1 (**8.5 days stalled between invoice issuance and carrier dispatch**). Opening another small store without first fixing the invoicing-to-dispatch workflow will replicate >15-day delivery times.
+* **Analytical Boundaries (What Cannot Be Claimed):** The dataset does not capture external competitor presence; we cannot claim that the "Gold" franchise tier *causes* higher revenue (reverse causality is likely: high-revenue stores get promoted to Gold); and while the data pinpoints the exact process interval where time is lost (`Nota → Despacho`), identifying the operational root cause (staffing, ERP integration, or carrier collection frequency) requires on-site process auditing.
