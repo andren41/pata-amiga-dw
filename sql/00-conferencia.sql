@@ -1,10 +1,9 @@
--- =====================================================================================
---  ARQUIVO 0: AUDITORIA E VALIDAÇÃO
---  Projeto: DW Pata Amiga  |  MySQL 8.0
--- =====================================================================================
---  Objetivo: Script auxiliar para conferência de métricas e diagnóstico
---  da origem antes e durante a construção do modelo dimensional.
--- =====================================================================================
+-- ============================================================================
+-- SCRIPT 00: DATA QUALITY & STAGING DIAGNOSTICS
+-- Purpose: Audit raw data imported from the 3 source systems (E-commerce,
+--          Store Registry, and Service Regions) to inspect row counts, nulls,
+--          spelling variations, and date formats prior to ETL modeling.
+-- ============================================================================
 
 USE dw_pata_amiga;
 
