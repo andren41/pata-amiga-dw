@@ -1,10 +1,9 @@
--- =====================================================================================
---  ARQUIVO 1: CRIAÇÃO DO BANCO E CARGA STAGING
---  Projeto: DW Pata Amiga  |  MySQL 8.0
--- =====================================================================================
---  Objetivo: Criar o banco de dados dw_pata_amiga e realizar a ingestão 
---  dos dados brutos (staging) exatamente como vieram dos sistemas de origem.
--- =====================================================================================
+-- ============================================================================
+-- SCRIPT 01: DATABASE CREATION & RAW STAGING LOAD
+-- Purpose: Create the `dw_pata_amiga` schema and populate the 3 denormalized
+--          staging tables (`stg_pedido`, `stg_loja`, `stg_loja_praca`).
+-- Note:    Run with --default-character-set=utf8mb4 to preserve accents.
+-- ============================================================================
 
 DROP DATABASE IF EXISTS dw_pata_amiga;
 CREATE DATABASE dw_pata_amiga CHARACTER SET utf8mb4;
