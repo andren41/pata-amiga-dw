@@ -1,27 +1,31 @@
--- =====================================================================================
---  ARQUIVO 2: CRIAÇÃO DA ESTRUTURA E CARGAS ESTÁTICAS
---  Projeto: DW Pata Amiga  |  MySQL 8.0
--- =====================================================================================
---  Pré-requisito: Executar 01-carga-staging.sql
+-- =============================================================================
+--  FILE 2: DDL STRUCTURE CREATION & STATIC DIMENSION LOADS
+--  Project: Pata Amiga DW  |  MySQL 8.0
+-- =============================================================================
+--  Prerequisite: Run 01-carga-staging.sql first
 --
---  Objetivo deste script:
+--  Purpose of this script:
 --
---  1) Criar e popular as dimensões estáticas (dim_tempo e dim_loja).
+--  1) Create and populate the static dimensions (dim_tempo and dim_loja).
 --
---  2) Criar a estrutura (CREATE TABLE) das demais tabelas (dim_categoria, dim_praca,
---     bridge_loja_praca e fato_pedido). Estas tabelas serão populadas nos scripts 03 e 04.
+--  2) Create the DDL structure (CREATE TABLE) for the remaining tables (dim_categoria,
+--     dim_praca, bridge_loja_praca, and fato_pedido). These tables will be
+--     populated in scripts 03 and 04.
 --
---  Regras de Negócio Aplicadas:
+--  Applied Business & Modeling Rules:
 --
---  - dim_tempo: A PK é a própria data em formato numérico (ex: 16/11/2023 -> 20231116).
---               Isso permite gerar a FK na tabela Fato por cálculo direto, sem JOIN.
+--  - dim_tempo: The PK is the date itself in numeric format (e.g., 16/11/2023 -> 20231116).
+--               This allows generating the FK in the Fact table via direct calculation,
+--               eliminating the need for a JOIN.
 --
---  - dim_loja:  A coluna 'chave_loja' traz o nome padronizado (caixa alta, sem acento).
---               É por ela que a Fato encontra a loja após limpar os dados da staging.
+--  - dim_loja:  The 'chave_loja' column stores the standardized store name (uppercase,
+--               unaccented). The Fact table uses this business key to resolve the store
+--               after cleaning the raw staging data.
 --
---  - Integridade: Toda dimensão recebe a linha -1 = "Não Informado". Nenhuma FK pode
---                 ficar nula; quando o dado original falta, ele é apontado para a linha -1.
--- =====================================================================================
+--  - Integrity: Every dimension receives a default row -1 = "Não Informado" (Not Informed).
+--               No FK is allowed to remain NULL; when source data is missing, it points
+--               to row -1.
+-- =============================================================================
 
 USE dw_pata_amiga;
 
