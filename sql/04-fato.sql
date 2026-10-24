@@ -1,5 +1,9 @@
--- Script 04: Carga da Tabela Fato de Pedidos
--- Projeto: Data Warehouse Pata Amiga
+-- ============================================================================
+-- SCRIPT 04: FACT TABLE TRANSFORMATION & LOAD (`fato_pedido`)
+-- Purpose: Sanitize dates, monetary strings, channels, and discounts; resolve
+--          dimension surrogate keys (including role-playing dates); and load
+--          4,044 order records into `fato_pedido`.
+-- ============================================================================
 
 USE dw_pata_amiga;
 
